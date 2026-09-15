@@ -31,6 +31,7 @@ from aiogram import Bot, Dispatcher, F, Router
 from aiogram.types import CallbackQuery, ForceReply, Message
 
 from app.infrastructure.telegram import ui  # noqa: E402
+from app.claude_login import ClaudeLogin, is_logged_in  # noqa: E402
 
 log = logging.getLogger("setup")
 
@@ -90,8 +91,11 @@ class Wizard:
     # что собрали
     values: dict[str, str] = field(default_factory=dict)
     install_local_stt: bool = False
-    # чего ждём текстом (ответ на ForceReply): "groq" | "llm" | None
+    # чего ждём текстом (ответ на ForceReply): "groq" | "llm" | "claude_code" | None
     awaiting: str | None = None
+    # авторизация claude
+    login: ClaudeLogin | None = None
+    claude_authed: bool = False
     # флаг «пора финализировать» — выставляется в хендлере, исполняется в run()
     finalize: bool = False
 
@@ -112,6 +116,15 @@ def _llm_keyboard():
 def _model_keyboard():
     return ui.keyboard([ui.button(m, f"setup:model:{m}",
                                   ui.PRIMARY if m == "opus" else ui.DEFAULT) for m in MODELS])
+
+
+def _auth_keyboard():
+    return ui.keyboard([ui.button("Войти в Claude", "setup:auth", ui.PRIMARY)],
+                       [ui.button("Пропустить (войду по SSH)", "setup:auth_skip")])
+
+
+def _finish_keyboard():
+    return ui.keyboard([ui.button("Готово, ставь", "setup:finish", ui.SUCCESS)])
 
 
 def _summary(w: Wizard) -> str:
@@ -186,6 +199,23 @@ def build_router(w: Wizard, dp: Dispatcher) -> Router:
                 w.values["EMBEDDINGS_API_KEY"] = text
             await message.answer("Модель Claude для разговора:", reply_markup=_model_keyboard())
             return
+        if w.awaiting == "claude_code":
+            w.awaiting = None
+            ok = False
+            if w.login is not None:
+                try:
+                    ok = await w.login.submit_code(text)
+                except Exception:  # noqa: BLE001
+                    ok = False
+                w.login = None
+            w.claude_authed = ok
+            if ok:
+                await message.answer("Claude авторизован. Всё, можно ставить.",
+                                     reply_markup=_finish_keyboard())
+            else:
+                await message.answer("Код не принят (просрочен или неверный). Попробуем ещё раз?",
+                                     reply_markup=_auth_keyboard())
+            return
 
     @r.callback_query(F.data.startswith("setup:"))
     async def on_button(cb: CallbackQuery) -> None:
@@ -220,10 +250,44 @@ def build_router(w: Wizard, dp: Dispatcher) -> Router:
             model = data.rsplit(":", 1)[-1]
             if model in MODELS:
                 w.values["CLAUDE_MODEL"] = model
-            await cb.message.answer(_summary(w),
-                                    reply_markup=ui.keyboard([ui.button("Готово, ставь",
-                                                                        "setup:finish", ui.SUCCESS)]))
+            await cb.message.answer(
+                _summary(w) + "\n\nОсталось войти в аккаунт Claude — это подписка, по которой "
+                "бот и будет думать. Открою ссылку, а код входа пришлёшь мне обратно.",
+                reply_markup=_auth_keyboard())
             await cb.answer()
+
+        elif data == "setup:auth":
+            if is_logged_in():
+                w.claude_authed = True
+                await cb.message.answer("Claude уже авторизован на этом сервере — можно ставить.",
+                                        reply_markup=_finish_keyboard())
+                await cb.answer()
+                return
+            await cb.answer("запускаю вход…")
+            w.login = ClaudeLogin()
+            try:
+                url = await w.login.start()
+            except Exception as exc:  # noqa: BLE001
+                w.login = None
+                await cb.message.answer(
+                    f"Не смог запустить вход автоматически ({exc}). Зайди на сервер по SSH и "
+                    "выполни `claude setup-token`, потом вернись и жми «Готово, ставь».",
+                    reply_markup=_finish_keyboard())
+                return
+            w.awaiting = "claude_code"
+            await cb.message.answer(
+                "1) Открой ссылку и войди в свой аккаунт Claude:\n" + url
+                + "\n\n2) Скопируй код, который там дадут, и пришли его мне сюда одним сообщением.",
+                reply_markup=ForceReply(input_field_placeholder="код входа"))
+
+        elif data == "setup:auth_skip":
+            w.claude_authed = is_logged_in()
+            await cb.message.answer(
+                "Ок, вход в Claude сделаешь на сервере командой `claude setup-token`. "
+                "Без него бот поднимется, но думать не сможет, пока не авторизуешь.",
+                reply_markup=_finish_keyboard())
+            await cb.answer()
+
         elif data == "setup:finish":
             await cb.answer("ставлю…")
             await cb.message.answer("Собираю конфиг и поднимаю боевую службу — минутку.")
@@ -270,6 +334,12 @@ def _finalize(w: Wizard, bot_username: str) -> list[str]:
         report.append("служба claude-tg установлена и запущена")
     except Exception as exc:  # noqa: BLE001
         report.append(f"службу поднять не вышло (сделай вручную scripts/install.sh): {exc}")
+
+    if w.claude_authed or is_logged_in():
+        report.append("claude авторизован — бот готов думать")
+    else:
+        report.append("claude НЕ авторизован: зайди по SSH и выполни `claude setup-token`, "
+                      "иначе бот не сможет отвечать")
 
     # PIN больше не нужен — убираем, чтобы не валялся.
     (ROOT / "run" / "setup.pin").unlink(missing_ok=True)
