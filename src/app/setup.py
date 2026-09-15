@@ -91,7 +91,7 @@ class Wizard:
     # что собрали
     values: dict[str, str] = field(default_factory=dict)
     install_local_stt: bool = False
-    # чего ждём текстом (ответ на ForceReply): "groq" | "llm" | "claude_code" | None
+    # чего ждём текстом (ответ на ForceReply): "llm" | "claude_code" | None
     awaiting: str | None = None
     # авторизация claude
     login: ClaudeLogin | None = None
@@ -104,7 +104,7 @@ MODELS = ("opus", "sonnet", "haiku")
 
 
 def _stt_keyboard():
-    return ui.keyboard([ui.button("Облако (Groq)", "setup:stt:cloud", ui.PRIMARY),
+    return ui.keyboard([ui.button("Облако (OpenRouter)", "setup:stt:cloud", ui.PRIMARY),
                         ui.button("Локально", "setup:stt:local")])
 
 
@@ -128,15 +128,13 @@ def _finish_keyboard():
 
 
 def _summary(w: Wizard) -> str:
-    stt = "облако (Groq)" if not w.install_local_stt else "локально (faster-whisper)"
-    groq = "задан" if w.values.get("GROQ_API_KEY") else "нет"
+    stt = "облако (OpenRouter)" if not w.install_local_stt else "локально (faster-whisper)"
     llm = "задан" if w.values.get("LLM_API_KEY") else "нет"
     model = w.values.get("CLAUDE_MODEL", "opus")
     return ("\n".join([
         "Проверь и ставим:",
         f"  распознавание голоса: {stt}",
-        f"  ключ Groq: {groq}",
-        f"  ключ OpenRouter (память/служебное): {llm}",
+        f"  ключ OpenRouter (память + облачный STT): {llm}",
         f"  модель Claude: {model}",
     ]))
 
@@ -151,7 +149,7 @@ def build_router(w: Wizard, dp: Dispatcher) -> Router:
         await msg_target.answer(
             "Ты владелец. Теперь пара вопросов.\n\n"
             "Как распознавать голосовые?\n"
-            "  Облако (Groq) — легко, ничего не качается, нужен бесплатный ключ.\n"
+            "  Облако (OpenRouter) — легко, ничего не качается, тем же ключом, что и память.\n"
             "  Локально — без сети, но тяжёлый пакет (~400 МБ) и нагрузка на CPU.",
             reply_markup=_stt_keyboard())
 
@@ -182,19 +180,11 @@ def build_router(w: Wizard, dp: Dispatcher) -> Router:
             return
 
         # --- ответ на запрос ключа (ForceReply) --------------------------- #
-        if w.awaiting == "groq":
-            w.awaiting = None
-            if text and text != "-":
-                w.values["GROQ_API_KEY"] = text
-                w.values["LOCAL_STT_FALLBACK"] = "0"
-            await message.answer("Служебный ключ OpenRouter? Он нужен для смысловой памяти "
-                                 "(поиск по разговорам). Без него бот работает, память ищет "
-                                 "полнотекстом.", reply_markup=_llm_keyboard())
-            return
         if w.awaiting == "llm":
             w.awaiting = None
             if text and text != "-":
-                # Один ключ OpenRouter обслуживает и чат-вызовы, и эмбеддинги.
+                # Один ключ OpenRouter обслуживает чат-вызовы, эмбеддинги и STT
+                # (облачное распознавание берёт его же, если STT_API_KEY пуст).
                 w.values["LLM_API_KEY"] = text
                 w.values["EMBEDDINGS_API_KEY"] = text
             await message.answer("Модель Claude для разговора:", reply_markup=_model_keyboard())
@@ -225,11 +215,14 @@ def build_router(w: Wizard, dp: Dispatcher) -> Router:
         data = cb.data or ""
 
         if data == "setup:stt:cloud":
+            # Облачный STT ходит в OpenRouter тем же ключом, что и память, — так что
+            # отдельный ключ не спрашиваем, он придёт на следующем шаге. Локального
+            # движка нет, поэтому откат на него гасим.
             w.install_local_stt = False
-            w.awaiting = "groq"
-            await cb.message.answer("Пришли ключ Groq (console.groq.com). "
-                                    "Или отправь «-», чтобы вписать позже.",
-                                    reply_markup=ForceReply(input_field_placeholder="gsk_..."))
+            w.values["LOCAL_STT_FALLBACK"] = "0"
+            await cb.message.answer("Голос будет распознавать OpenRouter — тем же ключом, что и "
+                                    "смысловая память. Введи ключ OpenRouter (он нужен для обоих).",
+                                    reply_markup=_llm_keyboard())
             await cb.answer()
         elif data == "setup:stt:local":
             w.install_local_stt = True

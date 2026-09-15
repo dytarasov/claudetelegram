@@ -50,7 +50,7 @@ from .infrastructure.repositories.notes import PgNoteRepository
 from .infrastructure.repositories.reminders import PgReminderRepository
 from .infrastructure.repositories.stt_terms import PgTermRepository
 from .infrastructure.repositories.turns import PgTurnRepository
-from .infrastructure.stt.groq_engine import GroqTranscriber
+from .infrastructure.stt.cloud_engine import CloudTranscriber
 from .infrastructure.stt.local_engine import LocalWhisperTranscriber
 from .infrastructure.stt.service import SpeechService
 from .infrastructure.system.git import GitClient
@@ -217,8 +217,8 @@ class EngineProvider(Provider):
         )
 
     @provide
-    def groq(self, settings: Settings) -> GroqTranscriber:
-        return GroqTranscriber(settings)
+    def cloud_stt(self, settings: Settings) -> CloudTranscriber:
+        return CloudTranscriber(settings)
 
     @provide
     def local_whisper(self, settings: Settings) -> LocalWhisperTranscriber:
@@ -243,9 +243,9 @@ class EngineProvider(Provider):
         return NullEmbedder()
 
     @provide
-    def stt(self, settings: Settings, groq: GroqTranscriber,
+    def stt(self, settings: Settings, cloud: CloudTranscriber,
             local: LocalWhisperTranscriber) -> SpeechToText:
-        return SpeechService(settings, groq, local)
+        return SpeechService(settings, cloud, local)
 
 
 class ServiceProvider(Provider):

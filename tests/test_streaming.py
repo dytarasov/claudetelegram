@@ -50,6 +50,7 @@ class FakeSender:
         self.bot = bot
         self.edits: list[str] = []
         self.last_markup = None
+        self.edit_flood = False   # эмуляция флуд-контроля на правке
 
     async def draft(self, chat_id, draft_id, html) -> bool:
         try:
@@ -69,6 +70,11 @@ class FakeSender:
             return False
 
     async def edit(self, chat_id, message_id, html, reply_markup=None) -> bool:
+        if self.edit_flood:
+            from aiogram.exceptions import TelegramRetryAfter
+            # Конструктор требует объект метода — нам нужен только тип, поэтому
+            # создаём экземпляр в обход __init__.
+            raise TelegramRetryAfter.__new__(TelegramRetryAfter)
         self.edits.append(html)
         self.last_markup = reply_markup
         return True
@@ -165,6 +171,20 @@ async def test_rich_mode_falls_back_to_edits_when_unsupported():
 
     assert view._mode == "edit"
     assert bot.sent, "должно было уйти обычным сообщением-правкой"
+
+
+async def test_finish_survives_edit_flood_control():
+    """Флуд-контроль на финальной правке не роняет ход: финал уходит сообщением."""
+    bot = FakeBot(); sender = FakeSender(bot)
+    view = _view(sender, stream_mode="edit")
+    # Есть живое сообщение, которое finish() попытается поправить.
+    view.msg = type("M", (), {"message_id": 7})()
+    sender.edit_flood = True
+    from app.infrastructure.telegram.views import Segment
+    view.segments.append(Segment("text", text="итоговый ответ"))
+    await view.finish({"total_cost_usd": 0.01})
+
+    assert any("итоговый ответ" in m for m in bot.sent), "финал должен уйти обычным сообщением"
 
 
 async def test_live_message_carries_cancel_button():

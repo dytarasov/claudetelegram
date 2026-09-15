@@ -3,7 +3,7 @@
 # Запускать можно повторно — уже сделанные шаги пропускаются.
 #
 #   ./scripts/install.sh                 полная установка: БД + локальный STT + служба
-#   ./scripts/install.sh --cloud-stt     без локального whisper (~400 МБ): STT в облаке (Groq)
+#   ./scripts/install.sh --cloud-stt     без локального whisper (~400 МБ): STT в облаке (OpenRouter)
 #   ./scripts/install.sh --no-db         не трогать Postgres (DSN пропишешь сам)
 #   ./scripts/install.sh --no-service    только venv, БД и .env, без службы
 set -euo pipefail
@@ -60,7 +60,7 @@ if [[ $WITH_LOCAL_STT -eq 1 ]]; then
   "$ROOT/venv/bin/pip" install --quiet -r "$ROOT/requirements-local-stt.txt"
   echo "  локальный STT установлен"
 else
-  echo "  локальный STT пропущен (--cloud-stt): голосовые пойдут в облако (Groq)"
+  echo "  локальный STT пропущен (--cloud-stt): голосовые пойдут в облако (OpenRouter)"
 fi
 
 say "Конфигурация"
@@ -76,10 +76,12 @@ mkdir -p "$ROOT/workspace/uploads" "$ROOT/models"
 
 if [[ $WITH_LOCAL_STT -eq 0 ]]; then
   # В облачном режиме локального движка нет — гасим откат на него, чтобы при
-  # сбое Groq бот честно сообщал об ошибке, а не грузил отсутствующий whisper.
+  # сбое облака бот честно сообщал об ошибке, а не грузил отсутствующий whisper.
   sed -i "s|^LOCAL_STT_FALLBACK=.*|LOCAL_STT_FALLBACK=0|" "$ROOT/.env"
-  grep -q '^GROQ_API_KEY=.\+' "$ROOT/.env" \
-    || warn "облачный STT выбран, но GROQ_API_KEY пуст — впиши ключ Groq в .env, иначе голосовые не распознать"
+  # Облачный STT ходит в OpenRouter ключом STT_API_KEY, а если он пуст — LLM_API_KEY.
+  if ! grep -qE '^(STT_API_KEY|LLM_API_KEY)=.+' "$ROOT/.env"; then
+    warn "облачный STT выбран, но ключа OpenRouter нет — впиши LLM_API_KEY (или STT_API_KEY) в .env, иначе голосовые не распознать"
+  fi
 fi
 
 # --- база данных ------------------------------------------------------------ #

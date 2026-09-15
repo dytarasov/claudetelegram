@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import logging
 import re
@@ -16,12 +17,13 @@ from pathlib import Path
 from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandObject
-from aiogram.types import Message
+from aiogram.types import CallbackQuery, Message
 from dishka.integrations.aiogram import FromDishka
 
 from ...domain.enums import TurnSource
 from ...domain.ports import SpeechToText
 from ...infrastructure.stt.base import STTError
+from ...infrastructure.telegram import ui
 from ...infrastructure.telegram.formatting import esc
 from ...infrastructure.telegram.render import shorten
 from ...infrastructure.telegram.sender import MessageSender
@@ -35,6 +37,21 @@ router = Router(name="files")
 
 # Telegram не примет документ больше 50 МБ; берём с запасом.
 MAX_SEND_BYTES = 45 * 1024 * 1024
+
+# Идущие распознавания голосовых: ключ (id входящего сообщения) → задача.
+# Кнопка «Прервать» на статусе «распознаю…» отменяет именно свою задачу, а сам
+# on_voice чистит запись в finally. Живёт в модуле, а не в БД: это состояние
+# ровно на время одного распознавания, между перезапусками ему смысла нет.
+_STT_JOBS: dict[int, asyncio.Task] = {}
+
+
+def _cancel_stt_job(key: int) -> bool:
+    """Отменить распознавание по ключу. True — было что отменять."""
+    task = _STT_JOBS.get(key)
+    if task is None or task.done():
+        return False
+    task.cancel()
+    return True
 
 
 @router.message(Command("get"))
@@ -70,12 +87,29 @@ async def on_voice(message: Message, bot: FromDishka[Bot], stt: FromDishka[Speec
 
     events.voice_received(float(getattr(media, "duration", 0) or 0))
     started = time.monotonic()
-    status = await sender.send(message.chat.id, "<i>распознаю…</i>",
-                               reply_to_message_id=message.message_id)
-    try:
+    # Статус с кнопкой «Прервать»: распознавание бывает долгим (скачивание +
+    # облако до 3 минут), и человек должен уметь его оборвать, не дожидаясь.
+    key = message.message_id
+    status = await sender.send(
+        message.chat.id, "<i>распознаю…</i>",
+        reply_to_message_id=message.message_id,
+        reply_markup=ui.keyboard([ui.button("Прервать", f"stt:cancel:{key}", ui.DANGER)]),
+    )
+
+    async def _recognize() -> str:
         file = await bot.get_file(media.file_id)
         await bot.download_file(file.file_path, destination=path)
-        text = (await stt.transcribe(path)).strip()
+        return (await stt.transcribe(path)).strip()
+
+    # Отдельной задачей — чтобы кнопка могла её отменить. await на самой задаче,
+    # поэтому отмена прилетает сюда как CancelledError, а не роняет ход.
+    task = asyncio.create_task(_recognize())
+    _STT_JOBS[key] = task
+    try:
+        text = await task
+    except asyncio.CancelledError:
+        await sender.send(message.chat.id, "<i>распознавание прервано</i>")
+        return
     except STTError as exc:
         await sender.send(message.chat.id, f"<b>Не расшифровал</b>: {esc(str(exc))}")
         return
@@ -84,6 +118,7 @@ async def on_voice(message: Message, bot: FromDishka[Bot], stt: FromDishka[Speec
         await sender.send(message.chat.id, f"<b>Не расшифровал</b>: <code>{esc(str(exc))}</code>")
         return
     finally:
+        _STT_JOBS.pop(key, None)
         path.unlink(missing_ok=True)
         if status:
             with contextlib.suppress(TelegramBadRequest):
@@ -98,6 +133,17 @@ async def on_voice(message: Message, bot: FromDishka[Bot], stt: FromDishka[Speec
         text = f"{text}\n\n{message.caption}"
     await enqueue(message, conversation, sender, text, source=TurnSource.VOICE,
                   note=f"<i>{esc(shorten(text, 900))}</i>")
+
+
+@router.callback_query(F.data.startswith("stt:cancel:"))
+async def on_stt_cancel(callback: CallbackQuery) -> None:
+    """Кнопка «Прервать» на статусе «распознаю…»: отменить именно это распознавание."""
+    try:
+        key = int((callback.data or "").rsplit(":", 1)[-1])
+    except ValueError:
+        await callback.answer("не понял")
+        return
+    await callback.answer("прерываю…" if _cancel_stt_job(key) else "уже готово")
 
 
 @router.message(F.document | F.photo | F.video)

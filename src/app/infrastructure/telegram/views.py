@@ -256,7 +256,17 @@ class TurnView:
         first = True
         for text in merged:
             if first and self.msg is not None:
-                if await self._sender.edit(self.chat_id, self.msg.message_id, text):
+                # Правка живого сообщения может упереться во флуд-контроль
+                # (TelegramRetryAfter) — особенно если стрим уже часто правил его.
+                # Долбить правкой и уж тем более ронять из-за этого весь ход нельзя:
+                # под флуд-контролем просто уходим обычным сообщением, а send()
+                # сам переждёт retry_after. Иначе финал терялся как «Ошибка хода».
+                edited = False
+                try:
+                    edited = await self._sender.edit(self.chat_id, self.msg.message_id, text)
+                except TelegramRetryAfter:
+                    edited = False
+                if edited:
                     first = False
                     continue
             await self._sender.send(self.chat_id, text)

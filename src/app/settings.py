@@ -59,6 +59,15 @@ class Settings(BaseSettings):
     local_stt_prompt: str = ""
     local_stt_fallback: bool = True
 
+    # ---- облачное распознавание речи (OpenAI-совместимый /audio/transcriptions) ----
+    # По умолчанию — OpenRouter: у него с июля 2026 есть /audio/transcriptions
+    # (Whisper и др.) по тем же ключам, что и чат. Отдельный ключ не обязателен:
+    # если stt_api_key пуст, берём llm_api_key (тот же аккаунт OpenRouter). Годится
+    # и любой другой такой провайдер (Groq, OpenAI) — меняются адрес, ключ и модель.
+    stt_base_url: str = "https://openrouter.ai/api/v1"
+    stt_model: str = "openai/whisper-large-v3-turbo"
+    stt_api_key: str = ""
+
     # ---- внешние модели ----
     # Чат-модели: OpenRouter (или любой другой OpenAI-совместимый шлюз).
     # Это НЕ тот claude, что ведёт разговор, — тот живёт отдельным процессом.
@@ -164,6 +173,12 @@ class Settings(BaseSettings):
         """Пояс человека. Отдельным свойством, чтобы не тащить zoneinfo всюду."""
         from zoneinfo import ZoneInfo
         return ZoneInfo(self.user_timezone)
+
+    @property
+    def stt_key(self) -> str:
+        """Ключ облачного STT. Отдельный, если задан; иначе — ключ OpenRouter от
+        чат-моделей: STT ходит в тот же аккаунт, лишней настройки не требуется."""
+        return self.stt_api_key or self.llm_api_key
 
     @property
     def root(self) -> Path:
