@@ -170,7 +170,7 @@ def build_router(w: Wizard, dp: Dispatcher) -> Router:
                     log.warning("too many wrong PIN attempts — aborting setup")
                     await message.answer("Слишком много неверных попыток. Мастер остановлен, "
                                          "перезапусти установку на сервере.")
-                    dp.stop_polling()
+                    asyncio.create_task(dp.stop_polling())
                     return
                 await message.answer("Пришли PIN, который напечатан в консоли сервера.")
             return
@@ -285,7 +285,10 @@ def build_router(w: Wizard, dp: Dispatcher) -> Router:
             await cb.answer("ставлю…")
             await cb.message.answer("Собираю конфиг и поднимаю боевую службу — минутку.")
             w.finalize = True
-            dp.stop_polling()   # дальше heavy-шаги в run(), уже без поллинга
+            # stop_polling() — корутина: НЕ ждём её внутри хендлера (иначе луп не
+            # выйдет и будет дедлок), а планируем задачей. Как только поллинг
+            # остановится, run() дойдёт до финала (запись .env + запуск службы).
+            asyncio.create_task(dp.stop_polling())
 
     return r
 
