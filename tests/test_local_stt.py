@@ -3,6 +3,11 @@
 Тест закрывает конкретные грабли: русский файнтюн large-v3-turbo от
 initial_prompt возвращает пустую строку. Общий stt_prompt (он нужен Groq) не
 должен доезжать до локальной модели, иначе голосовые молча перестают работать.
+
+На облачной установке (--cloud-stt) faster-whisper не ставится вовсе, а метод
+transcribe() тогда сразу отдаёт STTError. Гонять эти сценарии там незачем,
+поэтому весь модуль пропускается, если пакета нет: иначе preflight на слабом
+сервере валился бы на отсутствующей зависимости.
 """
 from __future__ import annotations
 
@@ -10,8 +15,10 @@ from pathlib import Path
 
 import pytest
 
-from app.infrastructure.stt.local_engine import LocalWhisperTranscriber
-from app.settings import Settings
+pytest.importorskip("faster_whisper")
+
+from app.infrastructure.stt.local_engine import LocalWhisperTranscriber  # noqa: E402
+from app.settings import Settings  # noqa: E402
 
 
 class FakeSegment:

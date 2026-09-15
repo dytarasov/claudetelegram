@@ -1,0 +1,8 @@
+# Локальное распознавание голосовых — работает без ключей и без сети, но тяжёлое:
+# faster-whisper тянет ctranslate2/onnxruntime/av, вместе около 400 МБ, и грузит
+# CPU. На слабом сервере это НЕ нужно — используй облачный Groq (GROQ_API_KEY) и
+# ставь только базовый requirements.txt.
+#
+# Ставить поверх базового:  venv/bin/pip install -r requirements-local-stt.txt
+# Или при установке:        scripts/install.sh  (без флага --cloud-stt)
+faster-whisper==1.2.1

@@ -2,7 +2,8 @@
 # Разворачивает бота на чистой машине: venv, зависимости, БД, .env, systemd-юнит.
 # Запускать можно повторно — уже сделанные шаги пропускаются.
 #
-#   ./scripts/install.sh                 полная установка: БД + служба
+#   ./scripts/install.sh                 полная установка: БД + локальный STT + служба
+#   ./scripts/install.sh --cloud-stt     без локального whisper (~400 МБ): STT в облаке (Groq)
 #   ./scripts/install.sh --no-db         не трогать Postgres (DSN пропишешь сам)
 #   ./scripts/install.sh --no-service    только venv, БД и .env, без службы
 set -euo pipefail
@@ -12,10 +13,12 @@ SERVICE=claude-tg
 UNIT=/etc/systemd/system/$SERVICE.service
 WITH_SERVICE=1
 WITH_DB=1
+WITH_LOCAL_STT=1   # ставить ли тяжёлый faster-whisper; --cloud-stt его выключает
 for arg in "$@"; do
   case "$arg" in
     --no-service) WITH_SERVICE=0 ;;
     --no-db)      WITH_DB=0 ;;
+    --cloud-stt)  WITH_LOCAL_STT=0 ;;
     *) echo "неизвестный флаг: $arg" >&2; exit 2 ;;
   esac
 done
@@ -51,7 +54,14 @@ say "Виртуальное окружение"
 [[ -d "$ROOT/venv" ]] || python3 -m venv "$ROOT/venv"
 "$ROOT/venv/bin/pip" install --quiet --upgrade pip
 "$ROOT/venv/bin/pip" install --quiet -r "$ROOT/requirements.txt"
-echo "  зависимости из requirements.txt установлены"
+echo "  базовые зависимости установлены"
+if [[ $WITH_LOCAL_STT -eq 1 ]]; then
+  echo "  ставлю локальный whisper (~400 МБ, для распознавания без сети)…"
+  "$ROOT/venv/bin/pip" install --quiet -r "$ROOT/requirements-local-stt.txt"
+  echo "  локальный STT установлен"
+else
+  echo "  локальный STT пропущен (--cloud-stt): голосовые пойдут в облако (Groq)"
+fi
 
 say "Конфигурация"
 if [[ -f "$ROOT/.env" ]]; then
@@ -63,6 +73,14 @@ fi
 chmod 600 "$ROOT/.env"
 sed -i "s|^CLAUDE_BIN=.*|CLAUDE_BIN=$CLAUDE_BIN|; s|^WORKSPACE=.*|WORKSPACE=$ROOT/workspace|" "$ROOT/.env"
 mkdir -p "$ROOT/workspace/uploads" "$ROOT/models"
+
+if [[ $WITH_LOCAL_STT -eq 0 ]]; then
+  # В облачном режиме локального движка нет — гасим откат на него, чтобы при
+  # сбое Groq бот честно сообщал об ошибке, а не грузил отсутствующий whisper.
+  sed -i "s|^LOCAL_STT_FALLBACK=.*|LOCAL_STT_FALLBACK=0|" "$ROOT/.env"
+  grep -q '^GROQ_API_KEY=.\+' "$ROOT/.env" \
+    || warn "облачный STT выбран, но GROQ_API_KEY пуст — впиши ключ Groq в .env, иначе голосовые не распознать"
+fi
 
 # --- база данных ------------------------------------------------------------ #
 # Отдельный скрипт: ставит Postgres+pgvector, заводит роль/базу и вписывает

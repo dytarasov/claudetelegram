@@ -10,6 +10,7 @@ PY   := $(ROOT)/venv/bin/python
 
 help:
 	@echo "make install    полная установка: venv, зависимости, Postgres+pgvector, служба (нужен sudo)"
+	@echo "make install ARGS=--cloud-stt   то же, но без локального whisper: STT в облаке (Groq)"
 	@echo "make db         только провижининг БД и запись DSN в .env (нужен sudo)"
 	@echo "make test       прогнать тесты"
 	@echo "make run        запустить бота вручную (без systemd)"
@@ -18,7 +19,7 @@ help:
 	@echo "make rollback REF=stable                   вернуться на версию"
 
 install:
-	./scripts/install.sh
+	./scripts/install.sh $(ARGS)
 
 db:
 	./scripts/setup_db.sh
