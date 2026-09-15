@@ -1,0 +1,22 @@
+# Шаблон. Реальные пути подставляет scripts/install.sh при установке.
+[Unit]
+Description=Claude Code <-> Telegram bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__ROOT__
+Environment=PYTHONUNBUFFERED=1
+Environment=PATH=__CLAUDE_BIN_DIR__:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=__ROOT__/venv/bin/python __ROOT__/src/bot.py
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=30
+# Процесс claude порождает bash-команды — им нужен запас дескрипторов.
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

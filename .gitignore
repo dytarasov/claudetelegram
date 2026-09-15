@@ -1,0 +1,10 @@
+.env
+venv/
+state.json
+workspace/
+models/
+__pycache__/
+*.pyc
+*.log
+run/
+backups/
