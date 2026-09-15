@@ -53,10 +53,23 @@ say "Виртуальное окружение (лёгкая база, без л
 "$ROOT/venv/bin/pip" install --quiet --upgrade pip
 "$ROOT/venv/bin/pip" install --quiet -r "$ROOT/requirements.txt"
 
+say "Claude CLI"
+# Бинарник ставим сами (это неинтерактивно). Авторизация — отдельный, браузерный
+# шаг, его проводит мастер в чате (ссылка → код); тут только кладём сам CLI.
+export PATH="$HOME/.local/bin:$PATH"
+if command -v claude >/dev/null; then
+  echo "  уже есть: $(command -v claude)"
+else
+  echo "  ставлю claude…"
+  curl -fsSL https://claude.ai/install.sh | bash \
+    || warn "не смог поставить claude автоматически — позже: curl -fsSL https://claude.ai/install.sh | bash"
+  export PATH="$HOME/.local/bin:$PATH"
+fi
+CLAUDE_BIN="$(command -v claude || echo "$HOME/.local/bin/claude")"
+
 say "Конфигурация"
 [[ -f "$ROOT/.env" ]] || cp "$ROOT/.env.example" "$ROOT/.env"
 chmod 600 "$ROOT/.env"
-CLAUDE_BIN="$(command -v claude || echo "$HOME/.local/bin/claude")"
 # Токен и пути проставляем; ALLOWED_USER_IDS НЕ трогаем — его допишет мастер на
 # финале, чтобы до конца настройки бот оставался в безопасном setup-режиме.
 python3 - "$ROOT/.env" "$TOKEN" "$CLAUDE_BIN" "$ROOT/workspace" <<'PY'
@@ -76,9 +89,6 @@ mkdir -p "$ROOT/workspace/uploads" "$ROOT/models" "$ROOT/run"
 
 say "База данных"
 "$ROOT/scripts/setup_db.sh" || warn "провижининг БД не удался — можно донастроить позже"
-
-command -v "$CLAUDE_BIN" >/dev/null || warn "claude CLI не найден. До запуска боевого режима поставь и авторизуй:
-    curl -fsSL https://claude.ai/install.sh | bash && claude"
 
 # --- PIN и запуск мастера --------------------------------------------------- #
 PIN="$("$ROOT/venv/bin/python" -c 'import secrets; print(secrets.randbelow(900000)+100000)')"

@@ -18,9 +18,16 @@ import json
 import os
 import re
 import select
+import shutil
 import struct
 import subprocess
 import time
+
+
+def claude_bin() -> str:
+    """Путь к claude CLI. PATH может не включать ~/.local/bin (мастер запущен не
+    из systemd), поэтому ищем и там — иначе setup-token падает 'No such file'."""
+    return shutil.which("claude") or os.path.expanduser("~/.local/bin/claude")
 
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07|\x1b[()][AB0]")
 # Ссылка входа. Ограничиваем набор символов теми, что реально бывают в URL, —
@@ -41,7 +48,7 @@ def extract_url(text: str) -> str | None:
 def is_logged_in() -> bool:
     """Спросить сам CLI, залогинены ли мы. `claude auth status` печатает JSON."""
     try:
-        out = subprocess.run(["claude", "auth", "status"], capture_output=True,
+        out = subprocess.run([claude_bin(), "auth", "status"], capture_output=True,
                              text=True, timeout=30).stdout
         return bool(json.loads(out).get("loggedIn"))
     except Exception:  # noqa: BLE001 — нет ответа/не JSON = считаем «не залогинены»
@@ -67,7 +74,7 @@ class ClaudeLogin:
         import fcntl
         fcntl.ioctl(slave, termios.TIOCSWINSZ, with_size)
         self._proc = subprocess.Popen(
-            ["claude", "setup-token"],
+            [claude_bin(), "setup-token"],
             stdin=slave, stdout=slave, stderr=slave,
             start_new_session=True, env=self._env, close_fds=True,
         )
